@@ -3,12 +3,13 @@
 import argparse
 import sys
 import yaml
-import os
-import os.path
 import string
 import re
 import copy
 from ast import literal_eval
+from itertools import product
+
+from path_utils import existing_directory, path_within
 
 NAME = "MRTS"
 VERSION = "0.1"
@@ -53,8 +54,8 @@ class RuleGenerator(object):
 
         self.indent           = "    "
         self.indentdepth      = 0
-        self.expdir           = expdir
-        self.testdir          = testdir
+        self.expdir           = existing_directory(expdir, "rules export directory")
+        self.testdir          = existing_directory(testdir, "tests export directory")
         self.content          = ""
         self.testcontent      = {}
 
@@ -119,52 +120,57 @@ class RuleGenerator(object):
                 print(", ".join(e.args))
                 sys.exit(1)
 
-    def parseconf(self, c):
-        """parsing a configuration file"""
-        # Before anything, load and replace constants for the current file.
-        if re.search(self.re_constants, str(c)) is not None:
-            c = self.parseconstants(c)
+    def parseconf(self, config):
+        """Parse one configuration file and write its generated rule file."""
+        config = self._replace_constants_if_needed(config)
+        self._load_global_config(config)
+        self._load_current_config(config)
+        self._load_test_data(config)
+        self._generate_configured_templates()
+        self._generate_configured_objects(config)
+        self._write_current_config()
 
-        # if there is a 'global' section, fill the possible global vars
-        if 'global' in c:
-            for k in c['global']:
-                if hasattr(self, k):
-                    setattr(self, k, c['global'][k])
+    def _replace_constants_if_needed(self, config):
+        if re.search(self.re_constants, str(config)) is None:
+            return config
+        return self.parseconstants(config)
 
-            if len(self.templates) > 0:
-                for t in self.templates:
-                    self.templates_dict[t['name']] = t['template']
+    def _load_global_config(self, config):
+        global_config = config.get('global')
+        if global_config is None:
+            return
+        for key, value in global_config.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+        for template in self.templates:
+            self.templates_dict[template['name']] = template['template']
 
-        # if there is a target, rulefile or testfile keyword, set the correct variable
-        for k in list(self.confdata.keys()):
-            if k in c and c[k] is not None:
-                self.current_confdata[k] = c[k]
+    def _load_current_config(self, config):
+        for key in self.confdata:
+            value = config.get(key)
+            if value is not None:
+                self.current_confdata[key] = value
 
-        # if config contains 'testdata' key, fill the current structure with it
-        if 'testdata' in c:
-            self.current_testdata = copy.deepcopy(c['testdata'])
+    def _load_test_data(self, config):
+        if 'testdata' in config:
+            self.current_testdata = copy.deepcopy(config['testdata'])
 
-        # if any template is applied, run with that, else exit
-        if len(self.current_confdata['templates']) > 0:
-            for t in self.current_confdata['templates']:
-                if t in self.templates_dict:
-                    tpl = self.templates_dict[t]
-                    self.genrulefromtemplate(tpl, self.current_confdata)
-                else:
-                    print("No such template: %s" % (t))
-                    print("Avaliable templates: %s" % (", ".join(list(self.templates_dict.keys()))))
-                    sys.exit(1)
+    def _generate_configured_templates(self):
+        for template_name in self.current_confdata['templates']:
+            template = self.templates_dict.get(template_name)
+            if template is None:
+                print("No such template: %s" % (template_name))
+                print("Avaliable templates: %s" % (", ".join(self.templates_dict.keys())))
+                sys.exit(1)
+            self.genrulefromtemplate(template, self.current_confdata)
 
-        # if there is an 'object' section, process them one-by-one
-        if 'objects' in c:
-            for o in c['objects']:
-                self.genobject(o)
+    def _generate_configured_objects(self, config):
+        for object_config in config.get('objects', []):
+            self.genobject(object_config)
 
-        # finally, write the generated config file
+    def _write_current_config(self):
         if self.current_confdata['rulefile'] is not None:
             self.writeconf(self.content)
-        else:
-            pass
 
     def parseconstants(self, c):
         """Load and replace any used constants in current configuration"""
@@ -179,209 +185,274 @@ class RuleGenerator(object):
                 self.default_constants = {}
         return self.swap_constants(c)
 
-    def swap_constants(self, c):
-        if isinstance(c, dict):
-            for key, val in c.items():
-                c[key] = self.swap_constants(val)
-        if isinstance(c, list):
-            for i in range(len(c)):
-                c[i] = self.swap_constants(c[i])
-        if isinstance(c, str):
-            matches = re.findall(self.re_constants, c)
-            for match in matches:
-                if match in self.current_confdata['constants']:
-                    og_type = type(self.current_confdata['constants'][match])
-                    c = c.replace(f"~{{{match}}}~", str(self.current_confdata['constants'][match]))
-                    if og_type in (list, dict):
-                        c = literal_eval(c)
-                    else:
-                        c = og_type(c)
-                elif match in self.default_constants:
-                    og_type = type(self.default_constants[match])
-                    c = c.replace(f"~{{{match}}}~", str(self.default_constants[match]))
-                    if og_type in (list, dict):
-                        c = literal_eval(c)
-                    else:
-                        c = og_type(c)
-        return c
+    def swap_constants(self, config):
+        if isinstance(config, dict):
+            return {key: self.swap_constants(value) for key, value in config.items()}
+        if isinstance(config, list):
+            return [self.swap_constants(value) for value in config]
+        if isinstance(config, str):
+            return self._swap_string_constants(config)
+        return config
 
-    def genrulefromtemplate(self, tpl, current_confdata):
-        """
-            generate a rule from data based on the template
-            tpl: applied template
-            current_confdata: content of processing file
-        """
+    def _swap_string_constants(self, value):
+        for match in re.findall(self.re_constants, value):
+            found, constant = self._find_constant(match)
+            if found:
+                value = self._replace_constant(value, match, constant)
+        return value
 
-        # get the template vars; 'colkey' is not a tpl variable, but
-        # needs for TARGET:colkey variables
-        tplvars = [t.replace("${", "").replace("}$", "").lower() for t in self.re_tplvars.findall(tpl)]
-        tplvars.append('colkey')
-        tplvars.append('generation')
+    def _find_constant(self, name):
+        if name in self.current_confdata['constants']:
+            return True, self.current_confdata['constants'][name]
+        if name in self.default_constants:
+            return True, self.default_constants[name]
+        return False, None
 
-        # build a dict for template vars
-        tpldict = {}
-        for t in tplvars:
-            if t in current_confdata:
-                tpldict[t] = current_confdata[t]
-            elif hasattr(self, t):
-                tpldict[t] = getattr(self, t)
+    def _replace_constant(self, value, name, constant):
+        replacement = value.replace(f"~{{{name}}}~", str(constant))
+        if isinstance(constant, (list, dict)):
+            return literal_eval(replacement)
+        return type(constant)(replacement)
 
-        # place before/after each directives to separate templates
-        before_defined = 'before' in tpldict['generation']
-        after_defined = 'after' in tpldict['generation']
-        before_each_defined = 'before_each' in tpldict['generation']
-        after_each_defined = 'after_each' in tpldict['generation']
-        if before_defined:
-            before_tpl = RuleGeneratorTemplate(tpldict['generation']['before'])
-        if after_defined:
-            after_tpl = RuleGeneratorTemplate(tpldict['generation']['after'])
-        if before_each_defined:
-            before_each_tpl = RuleGeneratorTemplate(tpldict['generation']['before_each'])
-        if after_each_defined:
-            after_each_tpl = RuleGeneratorTemplate(tpldict['generation']['after_each'])
+    def genrulefromtemplate(self, template, current_confdata):
+        """Generate rules and tests for every template argument combination."""
+        template_data = self._build_template_data(template, current_confdata)
+        generation_templates = self._build_generation_templates(template_data['generation'])
+        rule_template = RuleGeneratorTemplate(template)
+        template_data['currid'] = self.currid
+        actions_defined = self._prepare_optional_macro(template_data, 'actions')
+        directives_defined = self._prepare_optional_macro(template_data, 'directives')
+        self._write_before_template(generation_templates.get('before'), template_data)
+        for rule_data, colkeys, phase in self._rule_combinations(
+                template_data, actions_defined, directives_defined):
+            last_id = self._write_rule(
+                rule_template,
+                generation_templates,
+                rule_data,
+                directives_defined,
+            )
+            self._write_tests(colkeys, phase)
+            self._advance_rule_id(directives_defined, generation_templates.get('after_each'), last_id)
+        self._write_after_template(generation_templates.get('after'))
 
-        ruletpl = RuleGeneratorTemplate(tpl)
+    def _build_template_data(self, template, current_confdata):
+        variables = [
+            variable.replace("${", "").replace("}$", "").lower()
+            for variable in self.re_tplvars.findall(template)
+        ]
+        variables.extend(('colkey', 'generation'))
+        return {
+            variable: current_confdata[variable]
+            if variable in current_confdata else getattr(self, variable)
+            for variable in variables
+            if variable in current_confdata or hasattr(self, variable)
+        }
 
-        # current rule id
-        tpldict['currid'] = self.currid
+    def _build_generation_templates(self, generation):
+        return {
+            name: RuleGeneratorTemplate(generation[name])
+            for name in ('before', 'after', 'before_each', 'after_each')
+            if name in generation
+        }
 
-        # optional actions macro
-        actions_defined = 'actions' in tpldict
-        if not actions_defined:
-            tpldict['actions'] = [None]  # dummy but iterable value
+    def _prepare_optional_macro(self, template_data, name):
+        if name in template_data:
+            return True
+        template_data[name] = [None]
+        return False
 
-        # optional directives macro
-        directives_defined = 'directives' in tpldict
-        if not directives_defined:
-            tpldict['directives'] = [None]  # dummy but iterable
+    def _write_before_template(self, template, template_data):
+        if template is None:
+            return
+        before = template.ruleid_substitute(
+            increment_id_after_sub=True,
+            **{'CURRID': template_data['currid']},
+        ) + "\n"
+        self.content += before
+        self.currid = template.get_last_id()
+        template_data['CURRID'] = self.currid
 
-        # add before all directives with CURRID substitution
-        if before_defined:
-            before = before_tpl.ruleid_substitute(increment_id_after_sub=True, **{'CURRID': tpldict['currid']}) + "\n"
-            self.content += before
-            self.currid = before_tpl.get_last_id()
-            tpldict['CURRID'] = self.currid
+    def _rule_combinations(self, template_data, actions_defined, directives_defined):
+        values = product(
+            template_data['directives'],
+            template_data['actions'],
+            template_data['colkey'],
+            template_data['operator'],
+            template_data['oparg'],
+            template_data['phase'],
+        )
+        for directive, action, colkeys, operator, operand, phase in values:
+            rule_data = self._build_rule_data(
+                template_data,
+                directive,
+                action,
+                colkeys,
+                operator,
+                operand,
+                phase,
+                actions_defined,
+                directives_defined,
+            )
+            yield rule_data, colkeys, phase
 
-        # iterate loops through possible combinations of arguments
-        # mandatory arguments are 'colkey', 'operator', 'oparg' and 'phase'
-        # optional arguments are 'actions', 'directives'
-        # this 6 loop produces the combinations
-        for directive in tpldict['directives']:
-            for action in tpldict['actions']:
-                for c in tpldict['colkey']:
-                    for op in tpldict['operator']:
-                        for oparg in tpldict['oparg']:
-                            for phase in tpldict['phase']:
-                                tdict = copy.deepcopy(tpldict)
-                                if len(c) > 1:
-                                    tdict['target'] = "|".join(["%s:%s" % (tpldict['target'], ck) for ck in c])
-                                elif len(c) == 1 and c[0] != '':
-                                    tdict['target'] = "%s:%s" % (tpldict['target'], c[0])
-                                else:
-                                    tdict['target'] = "%s" % (tpldict['target'])
-                                tdict['operator'] = op
-                                tdict['oparg'] = oparg
-                                tdict['phase'] = phase
-                                if actions_defined:
-                                    tdict['actions'] = self.parseactions(action['action'])
-                                if directives_defined:
-                                    tdict['directives'] = self.parsedirectives(directive['directive'])
+    def _build_rule_data(self, template_data, directive, action, colkeys, operator,
+                         operand, phase, actions_defined, directives_defined):
+        rule_data = copy.deepcopy(template_data)
+        rule_data['target'] = self._target_for_colkeys(template_data['target'], colkeys)
+        rule_data['operator'] = operator
+        rule_data['oparg'] = operand
+        rule_data['phase'] = phase
+        if actions_defined:
+            rule_data['actions'] = self.parseactions(action['action'])
+        if directives_defined:
+            rule_data['directives'] = self.parsedirectives(directive['directive'])
+        return rule_data
 
-                                td = {}
-                                for k in tdict:
-                                    td[k.upper()] = tdict[k]
-                                td['CURRID'] = self.currid
+    def _target_for_colkeys(self, target, colkeys):
+        if len(colkeys) > 1:
+            return "|".join("%s:%s" % (target, colkey) for colkey in colkeys)
+        if len(colkeys) == 1 and colkeys[0] != '':
+            return "%s:%s" % (target, colkeys[0])
+        return "%s" % (target)
 
-                                if before_each_defined:
-                                    before_each = before_each_tpl.ruleid_substitute(increment_id_after_sub=True, **td) + "\n"
-                                    self.content += before_each
-                                    self.currid = before_each_tpl.get_last_id()
-                                    td['CURRID'] = self.currid
+    def _write_rule(self, rule_template, generation_templates, rule_data, directives_defined):
+        substitutions = {key.upper(): value for key, value in rule_data.items()}
+        substitutions['CURRID'] = self.currid
+        self._write_before_each(generation_templates.get('before_each'), substitutions)
+        rule = rule_template.substitute(**substitutions) + "\n"
+        last_id = self.currid
+        if directives_defined:
+            rule, last_id = self._substitute_directive_ids(rule, substitutions)
+        self.content += rule
+        return self._write_after_each(generation_templates.get('after_each'), substitutions, last_id)
 
-                                rule = ruletpl.substitute(**td) + "\n"
-                                if directives_defined:
-                                    dirtpl = RuleGeneratorTemplate(rule)
-                                    rule = dirtpl.ruleid_substitute(**td)
-                                    last_id = dirtpl.get_last_id()
+    def _write_before_each(self, template, substitutions):
+        if template is None:
+            return
+        before_each = template.ruleid_substitute(
+            increment_id_after_sub=True,
+            **substitutions,
+        ) + "\n"
+        self.content += before_each
+        self.currid = template.get_last_id()
+        substitutions['CURRID'] = self.currid
 
-                                self.content += rule
+    def _substitute_directive_ids(self, rule, substitutions):
+        directive_template = RuleGeneratorTemplate(rule)
+        substituted_rule = directive_template.ruleid_substitute(**substitutions)
+        return substituted_rule, directive_template.get_last_id()
 
-                                if after_each_defined:
-                                    after_each = after_each_tpl.ruleid_substitute(**td) + "\n"
-                                    self.content += after_each
-                                    last_id = after_each_tpl.get_last_id()
+    def _write_after_each(self, template, substitutions, last_id):
+        if template is None:
+            return last_id
+        after_each = template.ruleid_substitute(**substitutions) + "\n"
+        self.content += after_each
+        return template.get_last_id()
 
+    def _write_tests(self, colkeys, phase):
+        if self.current_confdata['testfile'] is None:
+            return
+        self._append_matching_tests(colkeys, phase)
+        if self.testcontent == {}:
+            print("No testdata for TARGET")
+            sys.exit(1)
+        self._write_test_file()
 
-                                # create a test if testfile was given
-                                if self.current_confdata['testfile'] is not None:
-                                    testcnt = 1
-                                    for ck in c:
-                                        if 'targets' in self.current_testdata:
-                                            for test in self.current_testdata['targets']:
-                                                if ck == '' or test['target'] == ck:
-                                                    # first colkey which matches in the list
-                                                    # create a test object
-                                                    if self.testcontent == {}:
-                                                        self.testcontent = copy.deepcopy(self.testdict['header'])
-                                                        self.testcontent['meta']['name'] = self.current_confdata['testfile']
-                                                    item = copy.deepcopy(self.testdict['item'])
-                                                    item['test_title'] = "%d-%d" % (self.currid, testcnt)
-                                                    item['ruleid'] = self.currid
-                                                    item['test_id'] = testcnt
-                                                    item['desc'] = "Test case for rule %d, #%d" % (self.currid, testcnt)
-                                                    item['stages'][0]['description'] = "Send request"
-                                                    item['stages'][0]['input']['method'] = self.current_confdata['phase_methods'][phase].upper()
-                                                    if self.current_testdata['phase_methods'][phase].lower() == "post":
-                                                        if isinstance(test['test']['data'], dict):
-                                                            ik, iv = list(test['test']['data'].items())[0]
-                                                            item['stages'][0]['input']['data'] = "%s=%s" % (ik, iv)
-                                                        elif isinstance(test['test']['data'], str):
-                                                            item['stages'][0]['input']['data'] = "%s" % (test['test']['data'])
-                                                        item['stages'][0]['input']['uri'] = "/post"
-                                                    if self.current_testdata['phase_methods'][phase].lower() == "get":
-                                                        if isinstance(test['test']['data'], dict):
-                                                            ik, iv = list(test['test']['data'].items())[0]
-                                                            item['stages'][0]['input']['uri'] = "/?%s=%s" % (ik, iv)
-                                                    # add headers if there are
-                                                    if 'input' in test['test']:
-                                                        if 'headers' in test['test']['input']:
-                                                            for h in test['test']['input']['headers']:
-                                                                item['stages'][0]['input']['headers'][h['name']] = h['value']
-                                                        if 'encoded_request' in test['test']['input']:
-                                                            item['stages'][0]['input']['encoded_request'] = test['test']['input']['encoded_request']
-                                                        if 'uri' in test['test']['input']:
-                                                            item['stages'][0]['input']['uri'] = test['test']['input']['uri']
-                                                    # overwrite default output field
-                                                    if 'output' in test['test']:
-                                                        item['stages'][0]['output'] = test['test']['output']
-                                                        # if expect_ids is in rewrite, append the current rule id
-                                                        if 'log' in item['stages'][0]['output']:
-                                                            if 'expect_ids' in item['stages'][0]['output']['log']:
-                                                                item['stages'][0]['output']['log']['expect_ids'] = [self.currid]
-                                                            if 'no_expect_ids' in item['stages'][0]['output']['log']:
-                                                                item['stages'][0]['output']['log']['no_expect_ids'] = [self.currid]
-                                                    else:
-                                                        item['stages'][0]['output']['log']['expect_ids'].append(self.currid)
+    def _append_matching_tests(self, colkeys, phase):
+        test_count = 1
+        for colkey in colkeys:
+            for test in self._matching_tests(colkey):
+                self._append_test(test, phase, test_count)
+                test_count += 1
 
-                                                    self.testcontent['tests'].append(item)
-                                                    testcnt += 1
-                                    # if no testdata
-                                    if self.testcontent == {}:
-                                        print("No testdata for TARGET")
-                                        sys.exit(1)
-                                    else:
-                                        fname = "%d_" % (self.currid) + self.current_confdata['testfile'].replace(".yaml", "") + ".yaml"
-                                        self.writetest(fname, self.testcontent)
-                                        print("testfile written: %s" % (fname))
-                                        self.testcontent = {}
-                                if directives_defined or after_each_defined:
-                                    self.currid = last_id  # next ids start
-                                self.currid += 1
-        # add after all directives with CURRID substitution
-        if after_defined:
-            after = after_tpl.ruleid_substitute(increment_id_after_sub=True, **{'CURRID': self.currid}) + "\n"
-            self.content += after
-            self.currid = after_tpl.get_last_id()
+    def _matching_tests(self, colkey):
+        for test in self.current_testdata.get('targets', []):
+            if colkey == '' or test['target'] == colkey:
+                yield test
+
+    def _append_test(self, test, phase, test_count):
+        if self.testcontent == {}:
+            self.testcontent = copy.deepcopy(self.testdict['header'])
+            self.testcontent['meta']['name'] = self.current_confdata['testfile']
+        item = copy.deepcopy(self.testdict['item'])
+        item['test_title'] = "%d-%d" % (self.currid, test_count)
+        item['ruleid'] = self.currid
+        item['test_id'] = test_count
+        item['desc'] = "Test case for rule %d, #%d" % (self.currid, test_count)
+        item['stages'][0]['description'] = "Send request"
+        self._configure_test_input(item, test, phase)
+        self._configure_test_output(item, test)
+        self.testcontent['tests'].append(item)
+
+    def _configure_test_input(self, item, test, phase):
+        request_input = item['stages'][0]['input']
+        request_input['method'] = self.current_confdata['phase_methods'][phase].upper()
+        method = self.current_testdata['phase_methods'][phase].lower()
+        self._set_request_data(request_input, test['test']['data'], method)
+        self._apply_custom_test_input(request_input, test['test'])
+
+    def _set_request_data(self, request_input, data, method):
+        if method == "post":
+            self._set_post_data(request_input, data)
+            request_input['uri'] = "/post"
+        if method == "get" and isinstance(data, dict):
+            key, value = next(iter(data.items()))
+            request_input['uri'] = "/?%s=%s" % (key, value)
+
+    def _set_post_data(self, request_input, data):
+        if isinstance(data, dict):
+            key, value = next(iter(data.items()))
+            request_input['data'] = "%s=%s" % (key, value)
+        elif isinstance(data, str):
+            request_input['data'] = "%s" % (data)
+
+    def _apply_custom_test_input(self, request_input, test_data):
+        if 'input' not in test_data:
+            return
+        custom_input = test_data['input']
+        for header in custom_input.get('headers', []):
+            request_input['headers'][header['name']] = header['value']
+        for field in ('encoded_request', 'uri'):
+            if field in custom_input:
+                request_input[field] = custom_input[field]
+
+    def _configure_test_output(self, item, test):
+        output = item['stages'][0]['output']
+        if 'output' not in test['test']:
+            output['log']['expect_ids'].append(self.currid)
+            return
+        item['stages'][0]['output'] = test['test']['output']
+        self._update_output_rule_ids(item['stages'][0]['output'])
+
+    def _update_output_rule_ids(self, output):
+        if 'log' not in output:
+            return
+        log = output['log']
+        if 'expect_ids' in log:
+            log['expect_ids'] = [self.currid]
+        if 'no_expect_ids' in log:
+            log['no_expect_ids'] = [self.currid]
+
+    def _write_test_file(self):
+        filename = "%d_" % (self.currid) + self.current_confdata['testfile'].replace(".yaml", "") + ".yaml"
+        self.writetest(filename, self.testcontent)
+        print("testfile written: %s" % (filename))
+        self.testcontent = {}
+
+    def _advance_rule_id(self, directives_defined, after_each_template, last_id):
+        if directives_defined or after_each_template is not None:
+            self.currid = last_id
+        self.currid += 1
+
+    def _write_after_template(self, template):
+        if template is None:
+            return
+        after = template.ruleid_substitute(
+            increment_id_after_sub=True,
+            **{'CURRID': self.currid},
+        ) + "\n"
+        self.content += after
+        self.currid = template.get_last_id()
 
     def parseactions(self, action):
         """From a list of actions as str, return a single str for inclusion in the template"""
@@ -425,7 +496,8 @@ class RuleGenerator(object):
     def writeconf(self, obj):
         """write the generated content"""
         try:
-            with open(os.path.join(self.expdir, self.current_confdata['rulefile']), 'w') as fp:
+            output_path = path_within(self.expdir, self.current_confdata['rulefile'], "rulefile")
+            with open(output_path, 'w') as fp:
                 fp.write(obj)
         except Exception as e:
             print(", ".join(e.args))
@@ -441,7 +513,8 @@ class RuleGenerator(object):
             explicit_start = True
         )
         try:
-            with open(os.path.join(self.testdir, fname), 'w') as fp:
+            output_path = path_within(self.testdir, fname, "testfile")
+            with open(output_path, 'w') as fp:
                 fp.write(testcontent)
         except Exception as e:
             print(", ".join(e.args))
@@ -533,7 +606,10 @@ if __name__ == "__main__":
         print("List of files is empty!")
         sys.exit(1)
 
-    gen = RuleGenerator(flist, args.expdir, args.testdir)
+    try:
+        gen = RuleGenerator(flist, args.expdir, args.testdir)
+    except ValueError as error:
+        parser.error(str(error))
 
 
     sys.exit(retval)
