@@ -29,10 +29,11 @@ class PathWithinTests(unittest.TestCase):
     def test_rejects_traversal_and_absolute_paths(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
+            outside_path = root.parent / "escaped.conf"
             with self.assertRaises(ValueError):
                 path_within(root, "../escaped.conf", "output")
             with self.assertRaises(ValueError):
-                path_within(root, Path(temporary_directory).parent / "escaped.conf", "output")
+                path_within(root, outside_path, "output")
 
 
 class MrtsLoadTests(unittest.TestCase):
