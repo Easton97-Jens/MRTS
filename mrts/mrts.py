@@ -1,34 +1,49 @@
 #!/usr/bin/env python3
 
 import argparse
-import glob
 import runpy
 import shutil
 import subprocess
 import sys
-import os
+from pathlib import Path
+
+from path_utils import existing_directory, existing_file, path_within
 
 
 def clean_generated_directories(genrules, gentests, verbose):
-    old_rules = glob.glob(os.path.join(genrules, "*.conf"))
-    old_test = glob.glob(os.path.join(gentests, "*.yaml"))
+    old_rules = genrules.glob("*.conf")
+    old_test = gentests.glob("*.yaml")
     for rule in old_rules:
-        os.remove(rule)
+        rule.unlink()
     for test in old_test:
-        os.remove(test)
+        test.unlink()
     if verbose:
         print("Cleaned generated directories")
 
 
 def generate_rules(testconfig, genrules, gentests, verbose):
-    testconfig = os.path.join(testconfig, "*.yaml")
-
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    generate_rules_script = os.path.join(current_dir, "generate-rules.py")
+    rule_definitions = sorted(testconfig.glob("*.yaml"))
+    generate_rules_script = path_within(
+        Path(__file__).resolve().parent,
+        "generate-rules.py",
+        "rule generator script",
+    )
 
     genrule_stdout = sys.stdout if verbose else subprocess.DEVNULL
-    subprocess.run([generate_rules_script, "-r", *glob.glob(testconfig), "-e",genrules, "-t", gentests],
-                   stdout=genrule_stdout)
+    subprocess.run(
+        [
+            sys.executable,
+            str(generate_rules_script),
+            "-r",
+            *(str(definition) for definition in rule_definitions),
+            "-e",
+            str(genrules),
+            "-t",
+            str(gentests),
+        ],
+        check=True,
+        stdout=genrule_stdout,
+    )
 
 
 def launch_albedo():
@@ -48,10 +63,10 @@ def execute_test_set(ftwconfig, infra, gentests, verbose):
         sys.exit(1)
 
     if ftwconfig is None:
-        ftwconfig = os.path.join(infra, "ftw.mrts.config.yaml")
+        ftwconfig = path_within(infra, "ftw.mrts.config.yaml", "go-ftw configuration")
 
     go_ftw = subprocess.Popen(
-        ["go-ftw", "run", "--config", ftwconfig, "--dir", gentests, "--wait-for-expect-status-code", "200", "--fail-fast"],
+        ["go-ftw", "run", "--config", str(ftwconfig), "--dir", str(gentests), "--wait-for-expect-status-code", "200", "--fail-fast"],
         stdout=subprocess.PIPE
     )
     stdout = ""
@@ -69,7 +84,7 @@ def execute_test_set(ftwconfig, infra, gentests, verbose):
 
 
 def write_mrts_load(infra_path, genrules_path, verbose):
-    load_file_path = os.path.join(infra_path, "mrts.load")
+    load_file_path = path_within(infra_path, "mrts.load", "MRTS load file")
     with open(load_file_path, "w") as f:
         f.write(f"Include {genrules_path}\n")
 
@@ -78,9 +93,9 @@ def write_mrts_load(infra_path, genrules_path, verbose):
 
 
 def delete_mrts_load(infra_path, verbose):
-    file_path = os.path.join(infra_path, "mrts.load")
-    if os.path.exists(file_path):
-        os.remove(file_path)
+    file_path = path_within(infra_path, "mrts.load", "MRTS load file")
+    if file_path.exists():
+        file_path.unlink()
         if verbose:
             print(f"File '{file_path}' has been deleted.")
     else:
@@ -89,10 +104,17 @@ def delete_mrts_load(infra_path, verbose):
 
 
 def main(infra, ftwconfig, testconfig, genrules, gentests, verbose, clean):
-
-    if not os.getcwd() == os.path.dirname(os.path.dirname(os.path.abspath(__file__))):
+    project_root = existing_directory(Path(__file__).resolve().parent.parent, "MRTS project root")
+    if existing_directory(".", "current working directory") != project_root:
         print("This script can only run from the MRTS root directory")
         sys.exit(1)
+
+    infra = existing_directory(infra, "infrastructure")
+    testconfig = existing_directory(testconfig, "rules definition directory")
+    genrules = existing_directory(genrules, "rules export directory")
+    gentests = existing_directory(gentests, "tests export directory")
+    if ftwconfig is not None:
+        ftwconfig = existing_file(ftwconfig, "go-ftw configuration")
 
     # Optionally, remove previous .conf and .yaml generated
     if clean:
@@ -107,13 +129,13 @@ def main(infra, ftwconfig, testconfig, genrules, gentests, verbose, clean):
     backend = launch_albedo()
 
     # Step 3: create temporary file in infra to include rules, figuring out the absolute path dynamically
-    infra_path = os.path.join(infra, "infra")
-    genrules_abs_path = os.path.join(os.path.abspath(genrules), "*.conf")
+    infra_path = existing_directory(path_within(infra, "infra", "infrastructure state"), "infrastructure state")
+    genrules_abs_path = str(genrules / "*.conf")
     write_mrts_load(infra_path, genrules_abs_path, verbose)
 
     # Step 4: launch infrastructure from start script
     print("Launch infrastructure")
-    runpy.run_path(os.path.join(infra, "start.py"))
+    runpy.run_path(str(path_within(infra, "start.py", "infrastructure start script")))
 
     # Step 5: use go-ftw to run tests
     print("Executing test set...")
@@ -127,7 +149,7 @@ def main(infra, ftwconfig, testconfig, genrules, gentests, verbose, clean):
     delete_mrts_load(infra_path, verbose)
 
     # Step 8: shutdown infrastructure from stop script
-    runpy.run_path(os.path.join(infra, "stop.py"))
+    runpy.run_path(str(path_within(infra, "stop.py", "infrastructure stop script")))
     print("Infrastructure shutdown")
 
     # The end
@@ -154,5 +176,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    main(args.infrastructure, args.ftwconfig, args.rulesdef, args.expdir, args.testdir, args.verbose, args.clean)
-
+    try:
+        main(args.infrastructure, args.ftwconfig, args.rulesdef, args.expdir, args.testdir, args.verbose, args.clean)
+    except ValueError as error:
+        parser.error(str(error))

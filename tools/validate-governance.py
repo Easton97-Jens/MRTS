@@ -13,6 +13,7 @@ from typing import Iterable, List, Tuple
 
 
 ROOT = Path(__file__).resolve().parent.parent
+RULE_MIGRATION_PATH = "docs/governance/rule-migration.md"
 
 REQUIRED_FILES = (
     "AGENTS.md",
@@ -45,7 +46,7 @@ REQUIRED_FILES = (
     "templates/task-contract.md",
     "templates/change-record.md",
     "templates/validation-report.md",
-    "docs/governance/rule-migration.md",
+    RULE_MIGRATION_PATH,
     "tools/test_validate_governance.py",
 )
 
@@ -181,7 +182,7 @@ def verify_config() -> List[str]:
 
 
 def verify_migration_matrix() -> List[str]:
-    report = read_text(ROOT / "docs/governance/rule-migration.md")
+    report = read_text(ROOT / RULE_MIGRATION_PATH)
     errors: List[str] = []
     if "## Rule migration matrix" not in report:
         errors.append("migration report is missing the Rule migration matrix heading")
@@ -193,7 +194,7 @@ def verify_migration_matrix() -> List[str]:
 
 
 def verify_source_disposition_matrix() -> List[str]:
-    report = read_text(ROOT / "docs/governance/rule-migration.md")
+    report = read_text(ROOT / RULE_MIGRATION_PATH)
     errors: List[str] = []
     if "## Source rule disposition matrix" not in report:
         errors.append("migration report is missing the Source rule disposition matrix heading")
@@ -208,29 +209,36 @@ def verify_markdown_structure_and_links() -> List[str]:
     errors: List[str] = []
     root = ROOT.resolve()
     for relative in REQUIRED_FILES:
-        if not relative.endswith(".md"):
-            continue
-        path = ROOT / relative
-        text = read_text(path)
-        if not text.lstrip().startswith("# "):
-            errors.append("{} must start with a level-one Markdown heading".format(relative))
-        for target in MARKDOWN_LINK_RE.findall(text):
-            value = target.strip().strip("<>")
-            destination = value.split("#", 1)[0]
-            if not destination or "://" in destination or destination.startswith("mailto:"):
-                continue
-            if destination.startswith("/"):
-                errors.append("{} has a non-relative Markdown link {!r}".format(relative, target))
-                continue
-            resolved = (path.parent / destination).resolve()
-            try:
-                resolved.relative_to(root)
-            except ValueError:
-                errors.append("{} link escapes MRTS root {!r}".format(relative, target))
-                continue
-            if not resolved.is_file():
-                errors.append("{} links to missing file {!r}".format(relative, target))
+        if relative.endswith(".md"):
+            errors.extend(verify_markdown_file(ROOT / relative, root, relative))
     return errors
+
+
+def verify_markdown_file(path: Path, root: Path, relative: str) -> List[str]:
+    errors: List[str] = []
+    text = read_text(path)
+    if not text.lstrip().startswith("# "):
+        errors.append("{} must start with a level-one Markdown heading".format(relative))
+    for target in MARKDOWN_LINK_RE.findall(text):
+        errors.extend(verify_markdown_link(path, root, relative, target))
+    return errors
+
+
+def verify_markdown_link(path: Path, root: Path, relative: str, target: str) -> List[str]:
+    value = target.strip().strip("<>")
+    destination = value.split("#", 1)[0]
+    if not destination or "://" in destination or destination.startswith("mailto:"):
+        return []
+    if destination.startswith("/"):
+        return ["{} has a non-relative Markdown link {!r}".format(relative, target)]
+    resolved = (path.parent / destination).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return ["{} link escapes MRTS root {!r}".format(relative, target)]
+    if not resolved.is_file():
+        return ["{} links to missing file {!r}".format(relative, target)]
+    return []
 
 
 def main() -> int:
