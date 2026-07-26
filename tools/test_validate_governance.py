@@ -46,7 +46,9 @@ class GovernanceValidatorTests(unittest.TestCase):
 
     def valid_manifest(self) -> dict:
         branch = "codex/worktree-cleanup-governance"
-        worktree = "/var/tmp/codex/worktrees/mrts/worktree-cleanup-governance"
+        worktree = str(
+            VALIDATOR._approved_worktree_root("mrts") / "worktree-cleanup-governance"
+        )
         return {
             "schema_version": 1,
             "task_id": "worktree-cleanup-governance",
@@ -145,6 +147,18 @@ class GovernanceValidatorTests(unittest.TestCase):
                 VALIDATOR.verify_config(),
                 ['.codex/config.toml must declare sandbox_mode = "workspace-write"'],
             )
+
+    def test_valid_manifest_remains_valid_with_ci_policy_root(self) -> None:
+        with mock.patch.dict(
+            VALIDATOR.os.environ,
+            {
+                "MRTS_GOVERNANCE_POLICY_ROOT": (
+                    "/home/runner/work/_temp/mrts-governance-policy"
+                )
+            },
+            clear=True,
+        ):
+            self.assertEqual(VALIDATOR.validate_cleanup_manifest(self.valid_manifest()), [])
 
     def test_missing_authorization_marker_is_reported(self) -> None:
         temporary = self.make_policy_root()
