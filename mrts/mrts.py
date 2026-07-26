@@ -10,6 +10,9 @@ from pathlib import Path
 from path_utils import existing_directory, existing_file, path_within
 
 
+GO_FTW_CONFIGURATION = "go-ftw configuration"
+
+
 def clean_generated_directories(genrules, gentests, verbose):
     old_rules = genrules.glob("*.conf")
     old_test = gentests.glob("*.yaml")
@@ -63,9 +66,9 @@ def execute_test_set(ftwconfig, infra, gentests, verbose):
         sys.exit(1)
 
     if ftwconfig is None:
-        ftwconfig = path_within(infra, "ftw.mrts.config.yaml", "go-ftw configuration")
+        ftwconfig = path_within(infra, "ftw.mrts.config.yaml", GO_FTW_CONFIGURATION)
 
-    ftwconfig = existing_file(ftwconfig, "go-ftw configuration")
+    ftwconfig = existing_file(ftwconfig, GO_FTW_CONFIGURATION)
     gentests = existing_directory(gentests, "tests export directory")
 
     go_ftw = subprocess.Popen(
@@ -128,7 +131,7 @@ def main(infra, ftwconfig, testconfig, genrules, gentests, verbose, clean):
     genrules = existing_directory(genrules, "rules export directory")
     gentests = existing_directory(gentests, "tests export directory")
     if ftwconfig is not None:
-        ftwconfig = existing_file(ftwconfig, "go-ftw configuration")
+        ftwconfig = existing_file(ftwconfig, GO_FTW_CONFIGURATION)
 
     # Optionally, remove previous .conf and .yaml generated
     if clean:
