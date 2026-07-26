@@ -406,19 +406,24 @@ class GovernanceValidatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "manifest.json"
             path.write_text(json.dumps([]), encoding="utf-8")
+            load_manifest = VALIDATOR.load_cleanup_manifest
+            manifest_path = str(path)
+            manifest_root = Path(temporary)
             with self.assertRaisesRegex(ValueError, "root must be an object"):
-                VALIDATOR.load_cleanup_manifest(str(path), manifest_root=Path(temporary))
+                load_manifest(manifest_path, manifest_root=manifest_root)
 
     def test_manifest_loader_requires_no_follow_directory_support(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             path = root / "manifest.json"
             path.write_text(json.dumps({}), encoding="utf-8")
+            load_manifest = VALIDATOR.load_cleanup_manifest
+            manifest_path = str(path)
             with mock.patch.object(VALIDATOR.os, "O_NOFOLLOW", None):
                 with self.assertRaisesRegex(
                     ValueError, "requires O_NOFOLLOW and O_DIRECTORY support"
                 ):
-                    VALIDATOR.load_cleanup_manifest(str(path), manifest_root=root)
+                    load_manifest(manifest_path, manifest_root=root)
 
     def test_manifest_loader_rejects_traversal_and_symlink_escape(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -426,33 +431,34 @@ class GovernanceValidatorTests(unittest.TestCase):
             root.mkdir()
             outside = Path(temporary) / "outside.json"
             outside.write_text(json.dumps({}), encoding="utf-8")
+            load_manifest = VALIDATOR.load_cleanup_manifest
+            outside_manifest = str(outside)
             with self.assertRaisesRegex(ValueError, "below"):
-                VALIDATOR.load_cleanup_manifest(str(outside), manifest_root=root)
+                load_manifest(outside_manifest, manifest_root=root)
             link = root / "linked.json"
             link.symlink_to(outside)
+            link_manifest = str(link)
             with self.assertRaisesRegex(
                 ValueError, "must not traverse a symlink or non-directory component"
             ):
-                VALIDATOR.load_cleanup_manifest(str(link), manifest_root=root)
+                load_manifest(link_manifest, manifest_root=root)
             outside_directory = Path(temporary) / "outside-directory"
             outside_directory.mkdir()
             (outside_directory / "manifest.json").write_text("{}", encoding="utf-8")
             nested = root / "nested"
             nested.symlink_to(outside_directory, target_is_directory=True)
+            nested_manifest = str(nested / "manifest.json")
             with self.assertRaisesRegex(
                 ValueError, "must not traverse a symlink or non-directory component"
             ):
-                VALIDATOR.load_cleanup_manifest(
-                    str(nested / "manifest.json"), manifest_root=root
-                )
+                load_manifest(nested_manifest, manifest_root=root)
             non_directory = root / "not-a-directory"
             non_directory.write_text("not a directory", encoding="utf-8")
+            non_directory_manifest = str(non_directory / "manifest.json")
             with self.assertRaisesRegex(
                 ValueError, "must not traverse a symlink or non-directory component"
             ):
-                VALIDATOR.load_cleanup_manifest(
-                    str(non_directory / "manifest.json"), manifest_root=root
-                )
+                load_manifest(non_directory_manifest, manifest_root=root)
 
     def test_manifest_loader_rejects_excessive_json_nesting(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -462,8 +468,10 @@ class GovernanceValidatorTests(unittest.TestCase):
             for _ in range(VALIDATOR.MAX_MANIFEST_DEPTH + 1):
                 value = {"nested": value}
             path.write_text(json.dumps(value), encoding="utf-8")
+            load_manifest = VALIDATOR.load_cleanup_manifest
+            manifest_path = str(path)
             with self.assertRaisesRegex(ValueError, "nesting limit"):
-                VALIDATOR.load_cleanup_manifest(str(path), manifest_root=root)
+                load_manifest(manifest_path, manifest_root=root)
 
 
 if __name__ == "__main__":
