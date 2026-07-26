@@ -18,7 +18,7 @@
 
 ## Authorization and feasibility
 
-- Authorized action classes (content / branch / remote / commit / push / PR / dependency / generator):
+- Authorized action classes (`content_edit` / `worktree_create` / `worktree_remove` / `branch_create` / `branch_delete_local` / `branch_delete_remote` / `commit` / `push` / `pr_create` / `pr_update` / `pr_close` / `merge` / `restore_recorded_gitlink`):
 - Prohibited actions:
 - Feasibility status and evidence:
 - Assumptions and open decisions:
@@ -27,12 +27,24 @@
 ## Baseline and plan
 
 - MRTS branch / HEAD / status:
-- origin and upstream URLs:
+- Default branch:
+- origin fetch URL / effective push URL / upstream URL:
+- GitHub repository / owner / archive state / writable permission:
 - Framework-recorded MRTS Gitlink:
 - Parent-recorded Framework Gitlink:
-- Exact task-owned paths:
+- Worktree ownership, exact task-owned path, creation time, and initial SHA:
+- Cleanup manifest path and planned lifecycle disposition:
 - Milestones and validation:
 - Delivery state and cleanup disposition:
+
+## Cleanup manifest and retention
+
+- `task_id`, repository, repository root, worktree path, local branch, remote branch, and PR:
+- Initial SHA, final task SHA, default branch, and expected merge/closure disposition:
+- Local unique files, evidence paths, running processes, cleanup steps, blocked steps, completion time:
+- Cleanup status/history (`pending` through `cleanup_complete` or `cleanup_blocked`):
+- Open PR branch retention / merged-or-closed remote deletion readback:
+- Embedded-checkout recorded-Gitlink restoration (only when expressly authorized):
 
 ## Completion
 

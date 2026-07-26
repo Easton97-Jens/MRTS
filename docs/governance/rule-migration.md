@@ -5,15 +5,19 @@
 This report establishes a native MRTS governance control plane while preserving
 the Parent, Framework, and MRTS repositories as separate ownership and Git
 boundaries. It applies to the existing MRTS Git root resolved with
-`git rev-parse --show-toplevel`; it does not create a second clone or external
-worktree.
+`git rev-parse --show-toplevel`. A non-trivial versioned MRTS task normally
+uses one task-owned external worktree under
+`/var/tmp/codex/worktrees/mrts/<task-id>`; direct work in the embedded checkout
+is allowed only when the current user expressly selects it and its separate
+restoration path.
 
 The governing outcome is intentionally narrow:
 
 - MRTS is read-only by default when the current user does not explicitly name
   it as a writable target.
 - A current user may explicitly authorize a scoped MRTS task. That task works
-  only in MRTS's own Git repository, branch, commit, push, and PR lifecycle.
+  only in MRTS's own Git repository, task-owned worktree, branch, commit,
+  push, PR, and cleanup lifecycle.
 - Parent and Framework never stage or commit MRTS source/files, and neither
   the Framework-MRTS nor Parent-Framework Gitlink moves without a separately
   explicit authorization.
@@ -48,6 +52,76 @@ The migration does not relax system/platform safety, default-branch protection,
 force-push prohibition, upstream-push prohibition, secret handling, external
 artifact containment, or independent Git/PR delivery.
 
+## Task-owned worktree and cleanup lifecycle
+
+Every non-trivial MRTS task has a secret-free cleanup manifest with task and
+repository identity, exact root/path/branch, baseline/final SHA, default
+branch, remote/PR evidence, expected disposition, unique local files,
+evidence/process/cleanup/blocked-step records, and completion time. It records
+the ordered cleanup states `pending`, `safe_to_remove`,
+`removed_local_worktree`, `removed_local_branch`,
+`remote_branch_retained_for_open_pr`, `removed_remote_branch`,
+`restored_recorded_gitlink`, `cleanup_complete`, or `cleanup_blocked`.
+
+The lifecycle distinguishes `analysis_complete`, `no_change`,
+`local_change_not_delivered`, `verified_pr`, `merged`, and
+`closed_without_merge`:
+
+- An open verified PR retains its remote branch/head. Only after exact
+  local/remote/PR SHA evidence, no unique local work/process, and no further
+  edit plan may its local worktree/branch be removed; record
+  `verified_pr_remote_cleanup_deferred`.
+- A merged or evidenced closed PR may remove task-local and verified-`origin`
+  remote branches only after current readback, no dependencies/unique work,
+  and retained evidence.
+- A task worktree is removable only after ownership, exact registered path,
+  status/untracked/unique-commit/PR/process/evidence checks. Use only
+  `rtk git -C <MRTS_ROOT> worktree remove <EXACT_WORKTREE_PATH>`, then
+  `rtk git -C <MRTS_ROOT> worktree prune` and a new
+  `rtk git -C <MRTS_ROOT> worktree list --porcelain`; never use `--force` or
+  manually delete a registered worktree. Recording either worktree-mutating
+  command requires the explicit `worktree_remove` authorization class.
+- A local branch is removed only after it is not checked out and only with
+  `rtk git -C <MRTS_ROOT> branch -d <TASK_BRANCH>`. A refusal is retained as
+  `cleanup_blocked_unmerged_local_branch`; never use `git branch -D`.
+- A remote deletion uses only
+  `rtk git -C <MRTS_ROOT> push origin --delete <TASK_BRANCH>` after the fresh
+  MRTS fork preflight and GitHub/readback. Never push or delete through
+  `upstream`.
+
+The manifest/validator evaluates supplied evidence structurally; a passing
+result does not itself execute cleanup or prove host enforcement. To keep that
+boundary explicit, `worktree_path` is validated lexically and is never
+dereferenced by manifest validation. The MRTS validator derives the current
+task-worktree parent from its own location; a Parent or Framework manifest
+requires its corresponding explicitly selected `*_GOVERNANCE_WORKTREE_ROOT`
+environment value. Those values are compared only as paths in supplied
+evidence, not used for cleanup.
+
+The `--cleanup-manifest` CLI accepts a regular UTF-8 JSON file only below the
+current repository's `.codex/plans` root. It rejects traversal and symlink
+escapes, opens every relative component without following a symlink, and bounds
+the input to 1 MiB and 32 JSON nesting levels. Cleanup action classes are
+allow-listed and deletion-shaped argv evidence must be matched by the
+corresponding explicit action class. These checks preserve an audit boundary;
+they do not execute or authorize the recorded cleanup step. On a platform
+without `O_NOFOLLOW` and `O_DIRECTORY`, the loader fails closed rather than
+claiming equivalent symlink protection.
+
+## Python governance CI
+
+`.github/workflows/python-governance.yml` validates pull requests, pushes to
+`main`, and manual runs with the exact stable CPython `3.14.6` release. It pins
+`actions/checkout` and `actions/setup-python` to full commit SHAs, uses only
+`contents: read`, disables persisted checkout credentials, asserts the exact
+interpreter/CPython/GIL-enabled build, compiles governance tools, creates an
+isolated temporary policy fixture, and runs the validator CLI against that
+fixture before its standard-library unit suite. The fixture is necessary
+because `AGENTS.md` and `.codex/` are intentionally ignored local control-plane
+material rather than versioned checkout files. Pull-request runs also check the
+full PR diff for whitespace errors. The workflow does not install project
+dependencies or execute generators.
+
 ## Rule migration matrix
 
 | Current rule | Target rule | Change class | Owner | Authorization | Behaviour impact | Evidence | Validator check | Status |
@@ -56,12 +130,14 @@ artifact containment, or independent Git/PR delivery.
 | Global RTK command proxy | Require canonical RTK for every command | reference_global_policy | MRTS | every command | command evidence only | `rtk-policy.md` | required policy markers | implemented |
 | Parent/Framework unconditional MRTS read-only wording | Default read-only; current user may explicitly target MRTS | adapt_to_mrts | Parent / Framework / MRTS | current top-level user and task contract | governance only | migrated policy clauses | policy markers and review | implemented |
 | Existing MRTS immutable/read-only-only plan | Allow explicit, action-class-scoped MRTS task plan | adapt_to_mrts | MRTS | current top-level user | governance only | `AGENTS.md` / read-only policy | authorization markers | implemented |
-| `sandbox_mode = "read-only"` claimed as enforced mode | Retain declared conservative default; require observed runtime evidence before claiming enforcement | adapt_to_mrts | MRTS local configuration | active environment separately grants capability | no product behavior | config and policy text | declared-default marker | implemented |
+| Non-trivial versioned work in a shared checkout | One task-owned external worktree and cleanup manifest unless the user explicitly selects direct embedded work | adapt_to_mrts | MRTS | explicit `worktree_create` / direct-checkout selection | governance and delivery isolation only | cleanup policy / manifest | manifest semantics and negative fixtures | implemented |
+| Post-delivery branch/worktree retention | Evidence-gated local cleanup; retain an open PR remote branch; delete merged/evidenced-closed remote branch only after readback | adapt_to_mrts | MRTS | explicit deletion action classes | governance only | cleanup/delivery policy | merged/open/dirty/foreign/unsafe command fixtures | implemented |
+| `sandbox_mode = "workspace-write"` claimed as enforcement or authorization | Retain default-deny authorization; use the approved bounded workspace-write capability profile and require observed runtime evidence before claiming enforcement | adapt_to_mrts | MRTS local configuration | active environment separately grants capability | no product behavior | config and policy text | declared-profile marker | implemented |
 | Parent/Framework/MRTS separate ownership | Retain separate repository, branch, PR, and evidence lifecycles | retain_existing | all | every cross-repo task | none | boundary policies | Gitlink wording review | implemented |
 | Framework staging / Gitlink prohibition | Retain: MRTS source never staged in Framework; Gitlink only by separately authorized Framework task | retain_existing | Framework | separate Framework authorization | none | Framework status/diffs | final Gitlink checks | implemented |
 | Parent Framework Gitlink prohibition | Retain: no Parent Gitlink update by implication | retain_existing | Parent | separate Parent authorization | none | Parent status/diff | final Gitlink checks | implemented |
 | Writable fork branch, exact staging, normal push and PR | Use only after explicit task action authority and own MRTS delivery lifecycle | merge_with_existing | MRTS | explicit branch/commit/push/PR authority | governance/delivery only | Git and delivery policies | final SHA/PR checks | implemented |
-| `origin` / `upstream` relationship | origin is the writable fork; upstream is verified source and never receives a push | adapt_to_mrts | MRTS | explicit remote action when changing config | no product behavior | remote verification | remote policy markers | implemented |
+| `origin` / `origin.pushurl` / `upstream` relationship | both origin fetch and effective push resolve to `Easton97-Jens/MRTS`; upstream is verified source and never receives a push/delete | adapt_to_mrts | MRTS | explicit remote action when changing config | no product behavior | remote verification | remote-mismatch/upstream negative fixtures | implemented |
 | Generators, orchestrator, Python dependencies and external tools | Keep external output/runtime/tool-root containment | retain_existing | MRTS | separate generator/dependency authorization | none | command/dependency policies | no-write validator scope | implemented |
 | Security, findings, evidence and secrets rules | Keep scoped security assessment, truthful evidence and secret safety | migrate_exact | MRTS | applicable task | none | security/evidence policies | required policy markers | implemented |
 | Parent/Framework subagent and PR policies | No inferred MRTS authority; a separate MRTS task/PR is required | adapt_to_mrts | all | current top-level user | governance only | boundary policies | final review | implemented |
@@ -98,7 +174,7 @@ not a Parent/Framework policy, an agent brief, a prior task, or a PR.
 | Existing MRTS `AGENTS.md`, `.codex/config.toml`, and read-only policy | Existing default read-only language and local sandbox declaration | yes | merge_with_existing | native `AGENTS.md`, `read-only-policy.md`, `policy-precedence.md` | Retains the conservative default while documenting task-scoped user authorization and no runtime-enforcement overclaim. |
 | Existing MRTS README, INSTALL, CHANGES, and project layout | English documentation convention and Python 3.9 project shape | yes | retain_existing | `project-overview.md`, `documentation.md`, `testing.md` | Governance documentation stays English and the validator uses only the Python standard library. |
 | Existing MRTS generators/orchestrators and product sources | Product/runtime behavior and generated outputs | yes | not_applicable_with_reason | command/testing policy only | The task is governance-only; no generator or product source is executed or modified. |
-| Existing MRTS CONTRIBUTING/SECURITY files and GitHub workflows | Repository contribution/security/CI convention | no — absent at inventory time | not_applicable_with_reason | migration report evidence | Missing files are not fabricated; future additions need their own scope. |
+| Existing MRTS CONTRIBUTING/SECURITY files and GitHub workflows | Repository contribution/security/CI convention | focused governance workflow added; contribution/security files remain absent | adapt_to_mrts | `.github/workflows/python-governance.yml` | Exact Python 3.14.6 CI validates only the standard-library governance scope with least privilege. |
 | Sensitive local settings, credentials, environments, caches, and evidence payloads | Prevent secret/private-data copying and machine-specific leakage | yes | sensitive_do_not_copy | no versioned MRTS destination | Governance docs record only safe provenance and redacted evidence. |
 | Parent/Framework ignored local control planes | Local governance edits that are not versioned | yes | local_only_do_not_copy | Parent/Framework existing ignored files | Update in place and report them; do not manufacture a Parent/Framework commit or PR. |
 | Unclear new authority outside the current prompt | Any action not enumerated by the current user | yes | conflict_requires_resolution | task contract and feasibility record | Stop and obtain a new current-user decision rather than inferring authority. |
@@ -163,11 +239,13 @@ that local policy text is technically enforced by every runtime environment.
 
 ## Validation and residual risk
 
-The native validator is deliberately read-only and validates structure and
-policy markers only. It does not prove sandbox enforcement, generator runtime,
-external service behavior, GitHub CI, reviews, SonarQube, or access-control
-behavior beyond the evidence actually observed. Those conditions remain task
-specific and must be reported with their exact status.
+The native validator is deliberately read-only. It validates control-plane
+structure/markers and semantic consistency of a caller-supplied cleanup
+manifest; it does not execute cleanup or prove sandbox enforcement, generator
+runtime, external service behavior, GitHub CI, reviews, SonarQube, remote
+deletion, or access-control behavior beyond the evidence actually observed.
+Those conditions remain task specific and must be reported with their exact
+status.
 
 The final migration validation records Markdown/routing, validator, policy
 searches, `git diff --check`, secret hygiene, remote configuration, MRTS
