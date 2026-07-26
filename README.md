@@ -10,6 +10,14 @@ The goals of this project:
 * create as many rules as possible for ModSecurity to test its behavior
 * create as many tests as possible for each rule
 
+## Governance validation
+
+The repository's focused governance CI uses exactly CPython 3.14.6. The
+standard-library validator remains syntax-compatible with the documented
+Python 3.9 baseline; it does not run generators, Git commands, or cleanup
+commands. See [INSTALL.md](INSTALL.md#governance-validation) for the runnable
+local checks and cleanup-manifest boundary.
+
 ModSecurity uses its rules [targets](https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v2.x%29#user-content-Variables), [operators](https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v2.x%29#user-content-Operators), [transformations](https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v2.x%29#transformation-functions) (special actions) and so many other components. It is necessary to test their behavior.
 
 Note, that [libmodsecurity3](https://github.com/owasp-modsecurity/ModSecurity/tree/v3/master) has a [regression test framework](https://github.com/owasp-modsecurity/ModSecurity/tree/v3/master/test) with several [test cases](https://github.com/owasp-modsecurity/ModSecurity/tree/v3/master/test/test-cases/regression), but it tests only the library, not the embedded state. For example we don't know anything about behavior of [Nginx connector](https://github.com/owasp-modsecurity/ModSecurity-nginx).
@@ -842,6 +850,5 @@ UNCOVERED TARGETs: ARGS_NAMES, ARGS_POST, ARGS_POST_NAMES, ...
 ```
 
 Based on the output, we actually covered 6 targets, so there are lot of works to cover all variables.
-
 
 

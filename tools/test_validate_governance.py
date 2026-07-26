@@ -160,6 +160,29 @@ class GovernanceValidatorTests(unittest.TestCase):
         with mock.patch.object(VALIDATOR, "POLICY_ROOT", Path(temporary.name)):
             self.assertEqual(VALIDATOR.verify_markdown_structure_and_links(), [])
 
+    def test_markdown_helper_preserves_selected_policy_root(self) -> None:
+        temporary = self.make_policy_root()
+        self.addCleanup(temporary.cleanup)
+        policy_root = Path(temporary.name)
+        agents = policy_root / "AGENTS.md"
+        agents.write_text(
+            agents.read_text(encoding="utf-8") + "\n[Policy README](.codex/README.md)\n",
+            encoding="utf-8",
+        )
+        with mock.patch.object(VALIDATOR, "POLICY_ROOT", policy_root):
+            self.assertEqual(VALIDATOR.verify_markdown_structure_and_links(), [])
+
+    def test_markdown_link_helper_rejects_escape_and_missing_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "policy.md"
+            path.write_text("# Fixture\n\n[Missing](missing.md)\n", encoding="utf-8")
+            errors = VALIDATOR.verify_markdown_file(path, root, "policy.md")
+            self.assertTrue(any("missing file" in error for error in errors))
+            path.write_text("# Fixture\n\n[Escape](../outside.md)\n", encoding="utf-8")
+            errors = VALIDATOR.verify_markdown_file(path, root, "policy.md")
+            self.assertTrue(any("escapes its selected root" in error for error in errors))
+
     def test_cleanup_manifest_for_safe_merged_pr_passes(self) -> None:
         self.assertEqual(VALIDATOR.validate_cleanup_manifest(self.valid_manifest()), [])
 
@@ -192,6 +215,22 @@ class GovernanceValidatorTests(unittest.TestCase):
         self.assertEqual(VALIDATOR.validate_cleanup_manifest(manifest), [])
         manifest["cleanup_status"] = "cleanup_complete"
         self.assert_error(manifest, "local_change_not_delivered must retain")
+
+    def test_unique_local_work_cannot_record_removal(self) -> None:
+        manifest = self.valid_manifest()
+        manifest["expected_disposition"] = "local_change_not_delivered"
+        manifest["PR"] = {"state": "NONE", "head_sha": SHA}
+        manifest["remote_branch"] = ""
+        manifest["local_unique_files"] = ["notes/unique-local-work.md"]
+        manifest["worktree"]["registered_after"] = True
+        manifest["cleanup_status"] = "cleanup_blocked"
+        manifest["blocked_steps"] = ["cleanup_blocked_unique_local_work"]
+        manifest["cleanup_steps"] = []
+        manifest["cleanup_history"] = [
+            "cleanup_blocked",
+            "removed_local_worktree",
+        ]
+        self.assert_error(manifest, "local_change_not_delivered must not record removed")
 
     def test_dirty_worktree_cannot_be_reported_complete(self) -> None:
         manifest = self.valid_manifest()
@@ -299,12 +338,105 @@ class GovernanceValidatorTests(unittest.TestCase):
         manifest["authorization"]["current_user_explicit"] = False
         self.assert_error(manifest, "current_user_explicit")
 
+    def test_cleanup_steps_require_matching_action_classes(self) -> None:
+        manifest = self.valid_manifest()
+        manifest["authorization"]["action_classes"].remove("worktree_remove")
+        self.assert_error(manifest, "include 'worktree_remove'")
+        manifest = self.valid_manifest()
+        manifest["authorization"]["action_classes"].append("not_an_action_class")
+        self.assert_error(manifest, "unsupported action")
+
+    def test_worktree_prune_requires_worktree_remove_authorization(self) -> None:
+        manifest = self.valid_manifest()
+        manifest["cleanup_steps"] = [
+            ["git", "-C", MRTS_ROOT, "worktree", "prune"],
+        ]
+        manifest["authorization"]["action_classes"].remove("worktree_remove")
+        self.assert_error(manifest, "include 'worktree_remove'")
+
+    def test_rtk_git_cleanup_argv_is_allowed(self) -> None:
+        manifest = self.valid_manifest()
+        manifest["cleanup_steps"] = [
+            ["rtk", "git"] + step[1:] for step in manifest["cleanup_steps"]
+        ]
+        self.assertEqual(VALIDATOR.validate_cleanup_manifest(manifest), [])
+
+    def test_manifest_validation_does_not_dereference_worktree_path(self) -> None:
+        with mock.patch.object(VALIDATOR, "Path", side_effect=AssertionError("Path used")):
+            self.assertEqual(VALIDATOR.validate_cleanup_manifest(self.valid_manifest()), [])
+
+    def test_closed_pr_requires_known_closure_disposition(self) -> None:
+        manifest = self.valid_manifest()
+        manifest["expected_disposition"] = "closed_without_merge"
+        manifest["PR"] = {
+            "state": "CLOSED",
+            "head_sha": SHA,
+            "closure_disposition": "free-form reason",
+        }
+        self.assert_error(manifest, "PR.closure_disposition has unsupported value")
+
     def test_manifest_loader_rejects_non_object_json(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "manifest.json"
             path.write_text(json.dumps([]), encoding="utf-8")
-            with self.assertRaises(ValueError):
-                VALIDATOR.load_cleanup_manifest(path)
+            with self.assertRaisesRegex(ValueError, "root must be an object"):
+                VALIDATOR.load_cleanup_manifest(str(path), manifest_root=Path(temporary))
+
+    def test_manifest_loader_requires_no_follow_directory_support(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "manifest.json"
+            path.write_text(json.dumps({}), encoding="utf-8")
+            with mock.patch.object(VALIDATOR.os, "O_NOFOLLOW", None):
+                with self.assertRaisesRegex(
+                    ValueError, "requires O_NOFOLLOW and O_DIRECTORY support"
+                ):
+                    VALIDATOR.load_cleanup_manifest(str(path), manifest_root=root)
+
+    def test_manifest_loader_rejects_traversal_and_symlink_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "plans"
+            root.mkdir()
+            outside = Path(temporary) / "outside.json"
+            outside.write_text(json.dumps({}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "below"):
+                VALIDATOR.load_cleanup_manifest(str(outside), manifest_root=root)
+            link = root / "linked.json"
+            link.symlink_to(outside)
+            with self.assertRaisesRegex(
+                ValueError, "must not traverse a symlink or non-directory component"
+            ):
+                VALIDATOR.load_cleanup_manifest(str(link), manifest_root=root)
+            outside_directory = Path(temporary) / "outside-directory"
+            outside_directory.mkdir()
+            (outside_directory / "manifest.json").write_text("{}", encoding="utf-8")
+            nested = root / "nested"
+            nested.symlink_to(outside_directory, target_is_directory=True)
+            with self.assertRaisesRegex(
+                ValueError, "must not traverse a symlink or non-directory component"
+            ):
+                VALIDATOR.load_cleanup_manifest(
+                    str(nested / "manifest.json"), manifest_root=root
+                )
+            non_directory = root / "not-a-directory"
+            non_directory.write_text("not a directory", encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, "must not traverse a symlink or non-directory component"
+            ):
+                VALIDATOR.load_cleanup_manifest(
+                    str(non_directory / "manifest.json"), manifest_root=root
+                )
+
+    def test_manifest_loader_rejects_excessive_json_nesting(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "manifest.json"
+            value = {}
+            for _ in range(VALIDATOR.MAX_MANIFEST_DEPTH + 1):
+                value = {"nested": value}
+            path.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "nesting limit"):
+                VALIDATOR.load_cleanup_manifest(str(path), manifest_root=root)
 
 
 if __name__ == "__main__":

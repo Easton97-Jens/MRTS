@@ -79,7 +79,8 @@ The lifecycle distinguishes `analysis_complete`, `no_change`,
   `rtk git -C <MRTS_ROOT> worktree remove <EXACT_WORKTREE_PATH>`, then
   `rtk git -C <MRTS_ROOT> worktree prune` and a new
   `rtk git -C <MRTS_ROOT> worktree list --porcelain`; never use `--force` or
-  manually delete a registered worktree.
+  manually delete a registered worktree. Recording either worktree-mutating
+  command requires the explicit `worktree_remove` authorization class.
 - A local branch is removed only after it is not checked out and only with
   `rtk git -C <MRTS_ROOT> branch -d <TASK_BRANCH>`. A refusal is retained as
   `cleanup_blocked_unmerged_local_branch`; never use `git branch -D`.
@@ -89,7 +90,37 @@ The lifecycle distinguishes `analysis_complete`, `no_change`,
   `upstream`.
 
 The manifest/validator evaluates supplied evidence structurally; a passing
-result does not itself execute cleanup or prove host enforcement.
+result does not itself execute cleanup or prove host enforcement. To keep that
+boundary explicit, `worktree_path` is validated lexically and is never
+dereferenced by manifest validation. The MRTS validator derives the current
+task-worktree parent from its own location; a Parent or Framework manifest
+requires its corresponding explicitly selected `*_GOVERNANCE_WORKTREE_ROOT`
+environment value. Those values are compared only as paths in supplied
+evidence, not used for cleanup.
+
+The `--cleanup-manifest` CLI accepts a regular UTF-8 JSON file only below the
+current repository's `.codex/plans` root. It rejects traversal and symlink
+escapes, opens every relative component without following a symlink, and bounds
+the input to 1 MiB and 32 JSON nesting levels. Cleanup action classes are
+allow-listed and deletion-shaped argv evidence must be matched by the
+corresponding explicit action class. These checks preserve an audit boundary;
+they do not execute or authorize the recorded cleanup step. On a platform
+without `O_NOFOLLOW` and `O_DIRECTORY`, the loader fails closed rather than
+claiming equivalent symlink protection.
+
+## Python governance CI
+
+`.github/workflows/python-governance.yml` validates pull requests, pushes to
+`main`, and manual runs with the exact stable CPython `3.14.6` release. It pins
+`actions/checkout` and `actions/setup-python` to full commit SHAs, uses only
+`contents: read`, disables persisted checkout credentials, asserts the exact
+interpreter/CPython/GIL-enabled build, compiles governance tools, creates an
+isolated temporary policy fixture, and runs the validator CLI against that
+fixture before its standard-library unit suite. The fixture is necessary
+because `AGENTS.md` and `.codex/` are intentionally ignored local control-plane
+material rather than versioned checkout files. Pull-request runs also check the
+full PR diff for whitespace errors. The workflow does not install project
+dependencies or execute generators.
 
 ## Rule migration matrix
 
@@ -143,7 +174,7 @@ not a Parent/Framework policy, an agent brief, a prior task, or a PR.
 | Existing MRTS `AGENTS.md`, `.codex/config.toml`, and read-only policy | Existing default read-only language and local sandbox declaration | yes | merge_with_existing | native `AGENTS.md`, `read-only-policy.md`, `policy-precedence.md` | Retains the conservative default while documenting task-scoped user authorization and no runtime-enforcement overclaim. |
 | Existing MRTS README, INSTALL, CHANGES, and project layout | English documentation convention and Python 3.9 project shape | yes | retain_existing | `project-overview.md`, `documentation.md`, `testing.md` | Governance documentation stays English and the validator uses only the Python standard library. |
 | Existing MRTS generators/orchestrators and product sources | Product/runtime behavior and generated outputs | yes | not_applicable_with_reason | command/testing policy only | The task is governance-only; no generator or product source is executed or modified. |
-| Existing MRTS CONTRIBUTING/SECURITY files and GitHub workflows | Repository contribution/security/CI convention | no — absent at inventory time | not_applicable_with_reason | migration report evidence | Missing files are not fabricated; future additions need their own scope. |
+| Existing MRTS CONTRIBUTING/SECURITY files and GitHub workflows | Repository contribution/security/CI convention | focused governance workflow added; contribution/security files remain absent | adapt_to_mrts | `.github/workflows/python-governance.yml` | Exact Python 3.14.6 CI validates only the standard-library governance scope with least privilege. |
 | Sensitive local settings, credentials, environments, caches, and evidence payloads | Prevent secret/private-data copying and machine-specific leakage | yes | sensitive_do_not_copy | no versioned MRTS destination | Governance docs record only safe provenance and redacted evidence. |
 | Parent/Framework ignored local control planes | Local governance edits that are not versioned | yes | local_only_do_not_copy | Parent/Framework existing ignored files | Update in place and report them; do not manufacture a Parent/Framework commit or PR. |
 | Unclear new authority outside the current prompt | Any action not enumerated by the current user | yes | conflict_requires_resolution | task contract and feasibility record | Stop and obtain a new current-user decision rather than inferring authority. |

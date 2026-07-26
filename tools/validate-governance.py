@@ -1171,8 +1171,14 @@ def _manifest_relative_parts(
 
 
 def _read_manifest_text(root: Path, relative_parts: Sequence[str]) -> str:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-    directory_flags = flags | getattr(os, "O_DIRECTORY", 0)
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    directory = getattr(os, "O_DIRECTORY", None)
+    if no_follow is None or directory is None:
+        raise ValueError(
+            "safe cleanup manifest loading requires O_NOFOLLOW and O_DIRECTORY support"
+        )
+    flags = os.O_RDONLY | no_follow | getattr(os, "O_CLOEXEC", 0)
+    directory_flags = flags | directory
     directory_fd: Optional[int] = None
     try:
         directory_fd = os.open(str(root), directory_flags)

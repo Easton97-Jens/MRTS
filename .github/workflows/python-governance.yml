@@ -1,0 +1,90 @@
+name: Python governance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  governance:
+    name: Python 3.14 governance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
+      - name: Set up CPython 3.14.6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14.6"
+          check-latest: false
+          allow-prereleases: false
+
+      - name: Assert the exact interpreter
+        shell: bash
+        run: |
+          python -VV
+          python - <<'PY'
+          import sys
+
+          expected = (3, 14, 6)
+          actual = sys.version_info[:3]
+          if actual != expected:
+              raise SystemExit("expected CPython {}, got {}".format(expected, actual))
+          if sys.implementation.name != "cpython":
+              raise SystemExit("expected CPython, got {}".format(sys.implementation.name))
+          is_gil_enabled = getattr(sys, "_is_gil_enabled", None)
+          if is_gil_enabled is not None and not is_gil_enabled():
+              raise SystemExit("the free-threaded Python build is not supported")
+          PY
+          python -m pip --version
+
+      - name: Compile the governance tools
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/pycache
+        run: python -m compileall -q tools mrts
+
+      - name: Prepare an isolated validator policy fixture
+        env:
+          GOVERNANCE_POLICY_ROOT: ${{ runner.temp }}/mrts-governance-policy
+        shell: bash
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python - "$GOVERNANCE_POLICY_ROOT" <<'PY'
+          import shutil
+          import sys
+
+          from tools.test_validate_governance import GovernanceValidatorTests
+
+          fixture = GovernanceValidatorTests().make_policy_root()
+          try:
+              shutil.copytree(fixture.name, sys.argv[1])
+          finally:
+              fixture.cleanup()
+          PY
+          printf 'MRTS_GOVERNANCE_POLICY_ROOT=%s\n' "$GOVERNANCE_POLICY_ROOT" >> "$GITHUB_ENV"
+
+      - name: Run the governance validator against its fixture
+        run: >-
+          PYTHONDONTWRITEBYTECODE=1 python tools/validate-governance.py
+          --policy-root "$MRTS_GOVERNANCE_POLICY_ROOT"
+
+      - name: Run standard-library governance unit tests
+        run: >-
+          PYTHONDONTWRITEBYTECODE=1 python -m unittest -v
+          tools.test_validate_governance tools.test_mrts_path_utils
+
+      - name: Check the pull request diff
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git diff --check "origin/${BASE_REF}...HEAD"
