@@ -204,8 +204,8 @@ testdata:
 ```
 
 * `target` - defines the variable name what you want to test; it can be null, but then you must define the expected rules or actions under the `object` block
-* `rulefile` - the name of generated file; the path will be passed as cli argument, you should define here the relative path
-* `testfile` - the name of generated test file; can be null if you don't want to make tests against rules. The path here also will be passed as cli argument.
+* `rulefile` - the relative name of the generated file inside the `-e` export directory. Absolute paths, traversal, and symlink escapes are rejected.
+* `testfile` - the relative name of the generated test file inside the `-t` export directory; it can be null if you don't want to make tests against rules. Absolute paths, traversal, and symlink escapes are rejected.
 * `objects` - a list type item, you can order the `object` which describes a `SecRule` or a `SecAction`. This is necessary because there are some special rules/actions, which can't described as regular rule. The first example generates the file `MRTS_001_INIT.conf` with a `SecAction` and a `SecRule`:
 
 ```
@@ -842,7 +842,6 @@ UNCOVERED TARGETs: ARGS_NAMES, ARGS_POST, ARGS_POST_NAMES, ...
 ```
 
 Based on the output, we actually covered 6 targets, so there are lot of works to cover all variables.
-
 
 
 
