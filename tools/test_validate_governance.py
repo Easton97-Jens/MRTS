@@ -35,7 +35,7 @@ class GovernanceValidatorTests(unittest.TestCase):
             path = policy_root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             if relative == ".codex/config.toml":
-                path.write_text('sandbox_mode = "read-only"\n', encoding="utf-8")
+                path.write_text('sandbox_mode = "workspace-write"\n', encoding="utf-8")
                 continue
             markers = VALIDATOR.MARKERS.get(relative, ())
             path.write_text(
@@ -132,6 +132,19 @@ class GovernanceValidatorTests(unittest.TestCase):
             with contextlib.redirect_stdout(output):
                 self.assertEqual(VALIDATOR.main([]), 0)
         self.assertIn("MRTS governance structure and policy markers are valid", output.getvalue())
+
+    def test_selected_policy_root_rejects_read_only_sandbox_mode(self) -> None:
+        temporary = self.make_policy_root()
+        self.addCleanup(temporary.cleanup)
+        policy_root = Path(temporary.name)
+        (policy_root / ".codex/config.toml").write_text(
+            'sandbox_mode = "read-only"\n', encoding="utf-8"
+        )
+        with mock.patch.object(VALIDATOR, "POLICY_ROOT", policy_root):
+            self.assertEqual(
+                VALIDATOR.verify_config(),
+                ['.codex/config.toml must declare sandbox_mode = "workspace-write"'],
+            )
 
     def test_missing_authorization_marker_is_reported(self) -> None:
         temporary = self.make_policy_root()

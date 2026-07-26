@@ -319,9 +319,9 @@ def verify_markers() -> List[str]:
 
 def verify_config() -> List[str]:
     config = read_text(path_for(".codex/config.toml"))
-    if re.search(r'^\s*sandbox_mode\s*=\s*"read-only"\s*$', config, re.MULTILINE):
+    if re.search(r'^\s*sandbox_mode\s*=\s*"workspace-write"\s*$', config, re.MULTILINE):
         return []
-    return ['.codex/config.toml must declare sandbox_mode = "read-only"']
+    return ['.codex/config.toml must declare sandbox_mode = "workspace-write"']
 
 
 def verify_migration_matrix() -> List[str]:
