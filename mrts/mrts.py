@@ -65,9 +65,23 @@ def execute_test_set(ftwconfig, infra, gentests, verbose):
     if ftwconfig is None:
         ftwconfig = path_within(infra, "ftw.mrts.config.yaml", "go-ftw configuration")
 
+    ftwconfig = existing_file(ftwconfig, "go-ftw configuration")
+    gentests = existing_directory(gentests, "tests export directory")
+
     go_ftw = subprocess.Popen(
-        ["go-ftw", "run", "--config", str(ftwconfig), "--dir", str(gentests), "--wait-for-expect-status-code", "200", "--fail-fast"],
-        stdout=subprocess.PIPE
+        [
+            "go-ftw",
+            "run",
+            "--config",
+            str(ftwconfig),
+            "--dir",
+            str(gentests),
+            "--wait-for-expect-status-code",
+            "200",
+            "--fail-fast",
+        ],
+        stdout=subprocess.PIPE,
+        shell=False,
     )
     stdout = ""
     for line in go_ftw.stdout:

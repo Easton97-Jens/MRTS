@@ -503,7 +503,7 @@ def _push_cleanup_violations(command: Sequence[str], default_branch: str) -> Lis
 
 
 def _destructive_cleanup_violations(
-    raw: Sequence[str], lowered: Sequence[str], command: Sequence[str], default_branch: str
+    lowered: Sequence[str], command: Sequence[str], default_branch: str
 ) -> List[str]:
     violations: List[str] = []
     if any(item.rsplit("/", 1)[-1] == "rm" for item in lowered):
@@ -560,9 +560,7 @@ def _contains_unsafe_command(
     violations.extend(_shell_wrapper_violations(lowered))
     command, command_violations = _direct_git_command(raw, lowered, repository_root)
     violations.extend(command_violations)
-    violations.extend(
-        _destructive_cleanup_violations(raw, lowered, command, default_branch)
-    )
+    violations.extend(_destructive_cleanup_violations(lowered, command, default_branch))
     if command and not _is_permitted_cleanup_command(
         command, worktree_path, branch, remote_branch
     ):
@@ -876,6 +874,55 @@ def _validate_gitlink_evidence(manifest: Mapping[str, Any], errors: List[str]) -
         errors.append("Parent-Framework Gitlink changed without separate authorization")
 
 
+def _record_exact_cleanup_action(
+    command: Sequence[str],
+    expected: Sequence[str],
+    action_name: str,
+    mismatch_error: str,
+    actions: Dict[str, bool],
+    errors: List[str],
+) -> None:
+    if list(command) == list(expected):
+        actions[action_name] = True
+    else:
+        errors.append(mismatch_error)
+
+
+def _record_cleanup_action(
+    command: Sequence[str],
+    context: Mapping[str, Any],
+    actions: Dict[str, bool],
+    errors: List[str],
+) -> None:
+    if command[:2] == ["worktree", "remove"]:
+        _record_exact_cleanup_action(
+            command,
+            ["worktree", "remove", context["worktree_path"]],
+            "saw_worktree_remove",
+            "worktree remove must name the exact task worktree_path",
+            actions,
+            errors,
+        )
+    elif command[:2] == ["branch", "-d"]:
+        _record_exact_cleanup_action(
+            command,
+            ["branch", "-d", context["branch"]],
+            "saw_local_branch_delete",
+            "git branch -d must name the exact task branch",
+            actions,
+            errors,
+        )
+    elif command[:3] == ["push", ORIGIN, "--delete"]:
+        _record_exact_cleanup_action(
+            command,
+            ["push", ORIGIN, "--delete", context["remote_branch"]],
+            "saw_remote_branch_delete",
+            "git push origin --delete must name the exact task remote branch",
+            actions,
+            errors,
+        )
+
+
 def _cleanup_actions(
     history: Sequence[Any],
     validated_steps: Sequence[Sequence[str]],
@@ -891,24 +938,7 @@ def _cleanup_actions(
         "saw_remote_branch_delete": False,
     }
     for argv in validated_steps:
-        command = _lifecycle_command(argv)
-        if command[:2] == ["worktree", "remove"]:
-            if command == ["worktree", "remove", context["worktree_path"]]:
-                actions["saw_worktree_remove"] = True
-            else:
-                errors.append("worktree remove must name the exact task worktree_path")
-        elif command[:2] == ["branch", "-d"]:
-            if command == ["branch", "-d", context["branch"]]:
-                actions["saw_local_branch_delete"] = True
-            else:
-                errors.append("git branch -d must name the exact task branch")
-        elif command[:3] == ["push", ORIGIN, "--delete"]:
-            if command == ["push", ORIGIN, "--delete", context["remote_branch"]]:
-                actions["saw_remote_branch_delete"] = True
-            else:
-                errors.append(
-                    "git push origin --delete must name the exact task remote branch"
-                )
+        _record_cleanup_action(_lifecycle_command(argv), context, actions, errors)
     return actions
 
 
@@ -941,6 +971,40 @@ def _validate_unique_work_retention(
     return has_unique_work
 
 
+def _validate_cleanup_complete_status(
+    context: Mapping[str, Any],
+    worktree: Mapping[str, Any],
+    actions: Mapping[str, bool],
+    worktree_clean: bool,
+    errors: List[str],
+) -> None:
+    if not worktree_clean:
+        errors.append("cleanup_complete requires a clean task worktree")
+    if worktree.get("registered_after") is not False:
+        errors.append("cleanup_complete requires worktree.registered_after=false")
+    if context["worktree_path"] and not actions["worktree_removed"]:
+        errors.append("cleanup_complete requires removed_local_worktree history")
+
+
+def _validate_safe_to_remove_status(
+    evidence: Mapping[str, Sequence[Any]],
+    worktree: Mapping[str, Any],
+    worktree_clean: bool,
+    has_unique_work: bool,
+    errors: List[str],
+) -> None:
+    if not worktree_clean:
+        errors.append("safe_to_remove requires a clean task worktree")
+    if has_unique_work:
+        errors.append("safe_to_remove requires no unique local work")
+    if worktree.get("registered_after") is not True:
+        errors.append("safe_to_remove requires worktree.registered_after=true")
+    if evidence["running_processes"]:
+        errors.append("safe_to_remove requires no running processes")
+    if evidence["blocked_steps"]:
+        errors.append("safe_to_remove requires no blocked cleanup steps")
+
+
 def _validate_cleanup_status(
     context: Mapping[str, Any],
     evidence: Mapping[str, Sequence[Any]],
@@ -952,23 +1016,13 @@ def _validate_cleanup_status(
     worktree = worktree_evidence["worktree"]
     worktree_clean = worktree.get("clean") is True
     if context["cleanup_status"] == "cleanup_complete":
-        if not worktree_clean:
-            errors.append("cleanup_complete requires a clean task worktree")
-        if worktree.get("registered_after") is not False:
-            errors.append("cleanup_complete requires worktree.registered_after=false")
-        if context["worktree_path"] and not actions["worktree_removed"]:
-            errors.append("cleanup_complete requires removed_local_worktree history")
+        _validate_cleanup_complete_status(
+            context, worktree, actions, worktree_clean, errors
+        )
     if context["cleanup_status"] == "safe_to_remove":
-        if not worktree_clean:
-            errors.append("safe_to_remove requires a clean task worktree")
-        if has_unique_work:
-            errors.append("safe_to_remove requires no unique local work")
-        if worktree.get("registered_after") is not True:
-            errors.append("safe_to_remove requires worktree.registered_after=true")
-        if evidence["running_processes"]:
-            errors.append("safe_to_remove requires no running processes")
-        if evidence["blocked_steps"]:
-            errors.append("safe_to_remove requires no blocked cleanup steps")
+        _validate_safe_to_remove_status(
+            evidence, worktree, worktree_clean, has_unique_work, errors
+        )
 
 
 def _validate_cleanup_action_records(
@@ -990,7 +1044,6 @@ def _validate_cleanup_action_records(
 
 
 def _validate_disposition_constraints(
-    manifest: Mapping[str, Any],
     context: Mapping[str, Any],
     pr_state: str,
     actions: Mapping[str, bool],
@@ -1130,9 +1183,7 @@ def validate_cleanup_manifest(manifest: Mapping[str, Any]) -> List[str]:
         context, evidence, worktree_evidence, actions, has_unique_work, errors
     )
     _validate_cleanup_action_records(worktree_evidence, actions, errors)
-    _validate_disposition_constraints(
-        manifest, context, pr_evidence["pr_state"], actions, errors
-    )
+    _validate_disposition_constraints(context, pr_evidence["pr_state"], actions, errors)
     _validate_open_pr(
         context, remote_evidence, pr_evidence, history, actions, errors
     )
