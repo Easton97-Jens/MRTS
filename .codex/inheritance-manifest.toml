@@ -1,0 +1,52 @@
+schema_version = 2
+repository = "mrts"
+parent_catalog = "../../../../.codex/inheritance-manifest.toml"
+
+[[inherit]]
+id = "PARENT-POLICY-PRECEDENCE"
+parent_sha256 = "72fb1a260491f297e951f696255c743ae88a6ca29c3e2555f4823438de3f578e"
+
+[[inherit]]
+id = "PARENT-TASK-WORKFLOW"
+parent_sha256 = "88ec5469763a1a1717ecb5ab4fd745bb0bd008b9f255530edba6dbee768777cd"
+
+[[inherit]]
+id = "PARENT-FEASIBILITY"
+parent_sha256 = "2efe9307718a16b54d6e8ec00053df838ac56362f6b66747e0f6fd5efd78f56a"
+
+[[inherit]]
+id = "PARENT-ARCHITECTURE-AND-BOUNDARIES"
+parent_sha256 = "8292052fc0c67fe1b49ab25142fb4c5ee18049f13b06d9ae5e34c16dc8286f18"
+
+[[inherit]]
+id = "PARENT-COMMAND-EXECUTION"
+parent_sha256 = "93c767f969a8bcd3887676d76a2dacd9442dab8abb1acea0fb8a4f8130bb0927"
+
+[[inherit]]
+id = "PARENT-RESOURCES-AND-STORAGE"
+parent_sha256 = "6258b815f57d05ce5e95f92729751ffbe3f8c9ebd75f5b9e45a6c220c5e64586"
+
+[[inherit]]
+id = "PARENT-SECURITY-POLICY"
+parent_sha256 = "9de88fcd03ba2eb797f85061499630c09d7afcc7eeba51e34a69a432c2b20185"
+
+[[inherit]]
+id = "PARENT-TOOLING-AND-LANGUAGE"
+parent_sha256 = "a10d12af28a6c60f9a5933ca7228ccb96a53c5946942d3bbd3ae99b8fbee40d7"
+
+[[inherit]]
+id = "PARENT-PYTHON-POLICY"
+parent_sha256 = "ee814ddea817e0b43c14f7526907322a2457eea89f035562982193a03d85f49e"
+
+[[inherit]]
+id = "PARENT-FINDINGS"
+parent_sha256 = "14fd7c7fb774c81088c88069a435dfd0452b669e62205fb159e2d442261f494b"
+
+[[inherit]]
+id = "PARENT-TESTING-AND-EVIDENCE"
+parent_sha256 = "cc55e61bfefed4ff6b9763c02270a7b692cb8f78692fa9fbbf3e10b6c1669118"
+
+[[inherit]]
+id = "PARENT-DEFINITION-OF-DONE"
+parent_sha256 = "4b0c7bd9492fc6dbc8529928e56a1f76c4f14449964d4df47b308208c3a56c26"
+

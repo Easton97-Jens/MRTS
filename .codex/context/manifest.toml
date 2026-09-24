@@ -1,0 +1,94 @@
+schema_version = 1
+repository = "mrts"
+
+[[policy]]
+id = "MRTS-PROJECT-OVERVIEW"
+path = "project-overview.md"
+
+[[policy]]
+id = "MRTS-ARCHITECTURE"
+path = "architecture.md"
+
+[[policy]]
+id = "MRTS-POLICY-PRECEDENCE"
+path = "policy-precedence.md"
+
+[[policy]]
+id = "MRTS-REPOSITORY-BOUNDARIES"
+path = "repository-boundaries.md"
+
+[[policy]]
+id = "MRTS-GOAL-DRIVEN-EXECUTION"
+path = "goal-driven-execution.md"
+
+[[policy]]
+id = "MRTS-RTK"
+path = "rtk-policy.md"
+
+[[policy]]
+id = "MRTS-COMMANDS"
+path = "commands.md"
+
+[[policy]]
+id = "MRTS-TESTING"
+path = "testing.md"
+
+[[policy]]
+id = "MRTS-SECURITY"
+path = "security.md"
+
+[[policy]]
+id = "MRTS-FINDINGS"
+path = "finding-management.md"
+
+[[policy]]
+id = "MRTS-DEPENDENCY-SUPPLY-CHAIN"
+path = "dependency-and-supply-chain.md"
+
+[[policy]]
+id = "MRTS-GITHUB-ACTIONS"
+path = "github-actions.md"
+
+[[policy]]
+id = "MRTS-TOOL-PROVENANCE"
+path = "tool-provenance.md"
+
+[[policy]]
+id = "MRTS-DOCUMENTATION"
+path = "documentation.md"
+
+[[policy]]
+id = "MRTS-EVIDENCE"
+path = "evidence.md"
+
+[[policy]]
+id = "MRTS-GIT"
+path = "git-policy.md"
+
+[[policy]]
+id = "MRTS-FORK-UPSTREAM"
+path = "fork-and-upstream-policy.md"
+
+[[policy]]
+id = "MRTS-DELIVERY-CI"
+path = "delivery-and-ci.md"
+
+[[policy]]
+id = "MRTS-FEASIBILITY"
+path = "feasibility.md"
+
+[[policy]]
+id = "MRTS-CLEANUP"
+path = "cleanup.md"
+
+[[policy]]
+id = "MRTS-DEFINITION-OF-DONE"
+path = "definition-of-done.md"
+
+[[policy]]
+id = "MRTS-READ-ONLY"
+path = "read-only-policy.md"
+
+[[policy]]
+id = "MRTS-GOVERNANCE-VALIDATION"
+path = "governance-validation.md"
