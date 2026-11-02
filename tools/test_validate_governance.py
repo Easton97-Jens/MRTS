@@ -270,7 +270,7 @@ class GovernanceValidatorTests(unittest.TestCase):
         self.assert_error(manifest, "worktree.task_owned")
         manifest = self.valid_manifest()
         manifest["worktree_path"] = MRTS_ROOT
-        self.assert_error(manifest, "outside the selected task-owned external root")
+        self.assert_error(manifest, "worktree_path must not be an authoritative repository checkout")
 
     def test_worktree_traversal_and_symlink_claims_are_rejected(self) -> None:
         manifest = self.valid_manifest()
